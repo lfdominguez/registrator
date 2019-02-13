@@ -9,17 +9,23 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"net"
 
 	dockerapi "github.com/fsouza/go-dockerclient"
 	"github.com/gliderlabs/pkg/usage"
-	"github.com/gliderlabs/registrator/bridge"
+	"github.com/lfdominguez/registrator/bridge"
 )
 
 var Version string
 
+var InternalIP string
+var ExternalIP string
+
 var versionChecker = usage.NewChecker("registrator", Version)
 
-var hostIp = flag.String("ip", "", "IP for ports mapped to the host")
+var internalIp = flag.String("ip-internal-mask", "", "IP Internal for ports mapped to the host")
+var externalIp = flag.String("ip-external-mask", "", "IP External for ports mapped to the host")
+
 var internal = flag.Bool("internal", false, "Use internal ports instead of published ones")
 var explicit = flag.Bool("explicit", false, "Only register containers which have SERVICE_NAME label set")
 var useIpFromLabel = flag.String("useIpFromLabel", "", "Use IP which is stored in a label assigned to the container")
@@ -72,8 +78,46 @@ func main() {
 		os.Exit(2)
 	}
 
-	if *hostIp != "" {
-		log.Println("Forcing host IP to", *hostIp)
+	log.Println("Detecting IPs")
+
+	netInterfaceAddresses, err := net.InterfaceAddrs()
+
+	if err != nil { 
+		log.Println("Cant detect IPs", err) 
+		return
+	}
+
+	_, internalCIDR, err := net.ParseCIDR(*internalIp)
+
+	if err != nil {
+		log.Println("Wrong CIDR for internal network mask", err) 
+		return
+	}
+
+	_, externalCIDR, err := net.ParseCIDR(*externalIp)
+
+	if err != nil {
+		log.Println("Wrong CIDR for external network mask", err) 
+		return
+	}
+
+	for _, netInterfaceAddress := range netInterfaceAddresses {
+		networkIp, ok := netInterfaceAddress.(*net.IPNet)
+
+		if ok && !networkIp.IP.IsLoopback() && networkIp.IP.To4() != nil {
+
+            ip := networkIp.IP.String()
+
+            if internalCIDR.Contains(networkIp.IP) {
+				fmt.Println("Set internal IP: " + ip)
+				InternalIP = ip
+			}
+
+			if externalCIDR.Contains(networkIp.IP) {
+				fmt.Println("Set external IP: " + ip)
+				ExternalIP = ip
+			}
+        }
 	}
 
 	if (*refreshTtl == 0 && *refreshInterval > 0) || (*refreshTtl > 0 && *refreshInterval == 0) {
@@ -103,7 +147,7 @@ func main() {
 	}
 
 	b, err := bridge.New(docker, flag.Arg(0), bridge.Config{
-		HostIp:          *hostIp,
+		HostIp:          InternalIP,
 		Internal:        *internal,
 		Explicit:        *explicit,
 		UseIpFromLabel:  *useIpFromLabel,
