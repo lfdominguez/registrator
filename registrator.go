@@ -148,6 +148,8 @@ func main() {
 
 	b, err := bridge.New(docker, flag.Arg(0), bridge.Config{
 		HostIp:          InternalIP,
+		ExternalIP		 ExternalIP,
+		InternalIP       InternalIP,
 		Internal:        *internal,
 		Explicit:        *explicit,
 		UseIpFromLabel:  *useIpFromLabel,

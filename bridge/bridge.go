@@ -198,11 +198,13 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		return
 	}
 
-	ports := make(map[string]ServicePort)
+	ports         := make(map[string]ServicePort)
+	portsPublish  := make(map[string]ServicePort)
 
 	// Extract configured host port mappings, relevant when using --net=host
 	for port, _ := range container.Config.ExposedPorts {
 		published := []dockerapi.PortBinding{ {"0.0.0.0", port.Port()}, }
+		portsPublish[string(port)] = servicePortPublish(container, port, published, b)
 		ports[string(port)] = servicePort(container, port, published)
 	}
 
@@ -211,12 +213,13 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		ports[string(port)] = servicePort(container, port, published)
 	}
 
-	if len(ports) == 0 && !quiet {
+	if len(ports) == 0 && len(portsPublish) == 0 && !quiet {
 		log.Println("ignored:", container.ID[:12], "no published ports")
 		return
 	}
 
-	servicePorts := make(map[string]ServicePort)
+	servicePorts        := make(map[string]ServicePort)
+	servicePortsPublish := make(map[string]ServicePort)
 	for key, port := range ports {
 		if b.config.Internal != true && port.HostPort == "" {
 			if !quiet {
@@ -227,9 +230,38 @@ func (b *Bridge) add(containerId string, quiet bool) {
 		servicePorts[key] = port
 	}
 
+	for key, port := range portsPublish {
+		if port.HostPort == "" {
+			if !quiet {
+				log.Println("ignored:", container.ID[:12], "port", port.ExposedPort, "not published on host")
+			}
+			continue
+		}
+		servicePortsPublish[key] = port
+	}
+
 	isGroup := len(servicePorts) > 1
+	isGroupPublish := len(servicePortsPublish) > 1
+
 	for _, port := range servicePorts {
-		service := b.newService(port, isGroup)
+		service := b.newService(port, isGroup, false)
+		if service == nil {
+			if !quiet {
+				log.Println("ignored:", container.ID[:12], "service on port", port.ExposedPort)
+			}
+			continue
+		}
+		err := b.registry.Register(service)
+		if err != nil {
+			log.Println("register failed:", service, err)
+			continue
+		}
+		b.services[container.ID] = append(b.services[container.ID], service)
+		log.Println("added:", container.ID[:12], service.ID)
+	}
+
+	for _, port := range servicePortsPublish {
+		service := b.newService(port, isGroupPublish, true)
 		if service == nil {
 			if !quiet {
 				log.Println("ignored:", container.ID[:12], "service on port", port.ExposedPort)
@@ -246,7 +278,7 @@ func (b *Bridge) add(containerId string, quiet bool) {
 	}
 }
 
-func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
+func (b *Bridge) newService(port ServicePort, isgroup bool, isPublish bool) *Service {
 	container := port.container
 	defaultName := strings.Split(path.Base(container.Config.Image), ":")[0]
 
@@ -284,7 +316,12 @@ func (b *Bridge) newService(port ServicePort, isgroup bool) *Service {
 	service := new(Service)
 	service.Origin = port
 	service.ID = hostname + ":" + container.Name[1:] + ":" + port.ExposedPort
-	service.Name = serviceName
+	if isPublish == false {
+		service.Name = serviceName
+	} else {
+		service.Name = serviceName + "_publish"
+	}
+	
 	if isgroup && !metadataFromPort["name"] {
 		service.Name += "-" + port.ExposedPort
 	}
