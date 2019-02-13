@@ -57,10 +57,6 @@ opening a [GitHub issue](https://github.com/lfdominguez/registrator/issues).
 
 To [registrator](https://github.com/gliderlabs/registrator)
 
-Big thanks to Weave for sponsoring, Michael Crosby for
-[skydock](https://github.com/crosbymichael/skydock), and the Consul mailing list
-for inspiration.
-
 ## License
 
 MIT
